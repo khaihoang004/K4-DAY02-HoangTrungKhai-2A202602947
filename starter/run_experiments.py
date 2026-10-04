@@ -3,6 +3,7 @@
 Examples:
   python starter/run_experiments.py --stage backbones
   python starter/run_experiments.py --stage training --backbone convnext_tiny
+  python starter/run_experiments.py --stage backbones --images-dir /data/deepweeds/images --labels-dir /data/deepweeds/labels
 Runs are deliberately single-seed screens. Final multi-seed runs belong after
 all choices have been made using validation only.
 """
@@ -49,12 +50,23 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--epochs", type=int, default=12)
     parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--images-dir", default="data/images",
+                        help="thư mục chứa các ảnh JPG (mặc định: data/images)")
+    parser.add_argument("--labels-dir", default="data/labels",
+                        help="thư mục chứa CSV labels/fold (mặc định: data/labels)")
     args = parser.parse_args()
+    images_dir = Path(args.images_dir).expanduser()
+    labels_dir = Path(args.labels_dir).expanduser()
+    if not images_dir.is_dir():
+        parser.error(f"không tìm thấy thư mục ảnh: {images_dir}")
+    if not labels_dir.is_dir():
+        parser.error(f"không tìm thấy thư mục nhãn: {labels_dir}")
     configs = ([{"exp_id": exp, "backbone": name} for exp, name in BACKBONES]
                if args.stage == "backbones" else training_configs(args.backbone))
     rows = []
     for values in configs:
-        cfg = Config(**values, seed=args.seed, epochs=args.epochs, batch_size=args.batch_size)
+        cfg = Config(**values, seed=args.seed, epochs=args.epochs, batch_size=args.batch_size,
+                     images_dir=str(images_dir), labels_dir=str(labels_dir))
         row = run(cfg); rows.append(row)
         print(json.dumps(row, indent=2, default=str), flush=True)
         pd.DataFrame(rows).to_csv(Path("runs") / f"{args.stage}_summary.csv", index=False)
