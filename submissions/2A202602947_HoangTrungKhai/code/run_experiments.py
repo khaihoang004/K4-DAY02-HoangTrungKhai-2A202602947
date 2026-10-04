@@ -67,7 +67,11 @@ def main():
     for values in configs:
         cfg = Config(**values, seed=args.seed, epochs=args.epochs, batch_size=args.batch_size,
                      images_dir=str(images_dir), labels_dir=str(labels_dir))
+        print(f"\n=== Starting {cfg.exp_id}: {cfg.backbone} | seed={cfg.seed} | "
+              f"epochs={cfg.epochs} | images={cfg.images_dir} | labels={cfg.labels_dir} ===", flush=True)
         row = run(cfg); rows.append(row)
+        print(f"=== Finished {cfg.exp_id}: best val macro-F1={row['macro_f1_val']:.4f} "
+              f"at epoch {row['best_epoch']} | mean epoch={row['mean_epoch_seconds']/60:.1f}m ===", flush=True)
         print(json.dumps(row, indent=2, default=str), flush=True)
         pd.DataFrame(rows).to_csv(Path("runs") / f"{args.stage}_summary.csv", index=False)
 

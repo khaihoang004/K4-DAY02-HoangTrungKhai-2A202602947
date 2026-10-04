@@ -184,7 +184,8 @@ def train_one_epoch(model, loader, criterion, optimizer, scheduler, scaler, cfg:
             if isinstance(module, torch.nn.modules.batchnorm._BatchNorm): module.eval()
     device = torch.device(device); use_amp = bool(cfg.amp and device.type == "cuda")
     total_loss = 0.0; n = 0; start = time.perf_counter()
-    for x, y, _ in loader:
+    interval = max(1, len(loader) // 8)
+    for batch_idx, (x, y, _) in enumerate(loader, start=1):
         x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
         optimizer.zero_grad(set_to_none=True)
         targets = y
@@ -198,6 +199,13 @@ def train_one_epoch(model, loader, criterion, optimizer, scheduler, scaler, cfg:
         scaler.step(optimizer); scaler.update(); scheduler.step()
         if ema is not None: ema.update(model)
         total_loss += float(loss.detach()) * y.size(0); n += y.size(0)
+        if batch_idx == 1 or batch_idx % interval == 0 or batch_idx == len(loader):
+            elapsed = time.perf_counter() - start
+            avg_batch = elapsed / batch_idx
+            eta = avg_batch * (len(loader) - batch_idx)
+            print(f"      batch {batch_idx:>4}/{len(loader)} ({batch_idx/len(loader):5.1%})"
+                  f" | loss={total_loss/max(1,n):.4f} | epoch elapsed={elapsed/60:.1f}m"
+                  f" | ETA={eta/60:.1f}m", flush=True)
     return {"train_loss": total_loss/max(1,n), "epoch_seconds": time.perf_counter()-start,
             "lr": max(group["lr"] for group in optimizer.param_groups)}
 
@@ -272,6 +280,8 @@ def run(cfg: Config) -> dict:
     train_loader = data_lib.make_loader(train_df, cfg.images_dir, tr, cfg.batch_size, True, cfg.sampler, cfg.num_workers, cfg.seed)
     val_loader = data_lib.make_loader(val_df, cfg.images_dir, ev, cfg.batch_size, False, num_workers=cfg.num_workers)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[{cfg.exp_id} seed={cfg.seed}] creating {cfg.backbone} (init={cfg.init}, device={device}); "
+          "pretrained weight download, if needed, may take a while", flush=True)
     net = model_lib.build_model(cfg.backbone, pretrained=cfg.init != "scratch", num_classes=9,
                                 drop_rate=cfg.drop_rate, init=cfg.init).to(device)
     criterion_kw = {}
@@ -287,7 +297,10 @@ def run(cfg: Config) -> dict:
     best_f1, best_epoch, best_state, best_eval, durations = -1.0, None, None, None, []
     history = []
     for epoch in range(1, cfg.epochs+1):
+        print(f"[{cfg.exp_id} seed={cfg.seed}] epoch {epoch}/{cfg.epochs}: training starts "
+              f"({len(train_loader)} batches)", flush=True)
         stats = train_one_epoch(net, train_loader, criterion, optimizer, scheduler, scaler, cfg, device, ema)
+        print(f"[{cfg.exp_id} seed={cfg.seed}] epoch {epoch}/{cfg.epochs}: evaluating validation set...", flush=True)
         eval_model = copy.deepcopy(net)
         if ema is not None: ema.copy_to(eval_model)
         names, y, logits, val_loss = evaluate(eval_model, val_loader, criterion, device)
@@ -296,6 +309,10 @@ def run(cfg: Config) -> dict:
                "top1_val": float(metrics["top1"])}
         history.append(row); durations.append(stats["epoch_seconds"])
         pd.DataFrame(history).to_csv(out/"history.csv", index=False)
+        print(f"[{cfg.exp_id} seed={cfg.seed}] epoch {epoch}/{cfg.epochs} done"
+              f" | train_loss={stats['train_loss']:.4f} | val_loss={val_loss:.4f}"
+              f" | val_macro_F1={metrics['macro_f1']:.4f} | val_top1={metrics['top1']:.4f}"
+              f" | {stats['epoch_seconds']/60:.1f}m", flush=True)
         if metrics["macro_f1"] > best_f1:
             best_f1, best_epoch = float(metrics["macro_f1"]), epoch
             best_state = copy.deepcopy(eval_model.state_dict())
