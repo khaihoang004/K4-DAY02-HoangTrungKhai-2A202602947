@@ -1,0 +1,6 @@
+{
+  "checkpoint": "submissions/2A202602947_HoangTrungKhai/runs/T03_label_smoothing/seed0/best.pt",
+  "backbone": "convnext_tiny",
+  "temperature_fit_on_validation": 0.620095229333868,
+  "device": "cuda"
+}
