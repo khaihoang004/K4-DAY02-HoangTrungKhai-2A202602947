@@ -68,8 +68,10 @@ class Config:
     labels_dir: str = "data/labels"
     out_dir: str = "runs"             # config.json, history.csv, checkpoint, logit của từng lần chạy
     pred_dir: str = "predictions"     # file dự đoán đúng định dạng eval.py (nộp cùng bài)
+    curves_dir: str = "curves"
     # --- chỉ bật ở Bước 4 (chung kết): ghi predictions trên TEST. Mặc định TẮT (quy tắc S4). ---
     save_test_predictions: bool = False
+    inference_method: str = "I00_1view"  # final test: I00_1view | I01_hflip_prob | I02_multiscale_prob | I03_temperature
 
 
 def run_dir(cfg: Config) -> Path:
@@ -322,14 +324,27 @@ def run(cfg: Config) -> dict:
     net.load_state_dict(best_state)
     names, y, logits, val_loss, metrics = best_eval
     np.savez_compressed(out/"val_logits.npz", filenames=np.asarray(names), y_true=y, logits=logits)
-    eval_lib.save_predictions(pred_path(cfg, "val"), names, y, _softmax(logits))
+    from inference import apply_temperature, fit_temperature
+    temperature = fit_temperature(logits, y) if cfg.inference_method == "I03_temperature" else None
+    if cfg.inference_method in {"I00_1view", "I03_temperature"}:
+        val_probs = _softmax(logits) if temperature is None else apply_temperature(logits, temperature)
+        val_names, val_y = names, y
+    else:
+        val_names, val_y, _, val_probs = _predict_inference(net, val_loader, device, cfg.inference_method)
+    if cfg.inference_method != "I00_1view":
+        eval_lib.save_predictions(Path(cfg.pred_dir)/f"{cfg.exp_id}_uncal_seed{cfg.seed}_val.csv", names, y, _softmax(logits))
+    eval_lib.save_predictions(pred_path(cfg, "val"), val_names, val_y, val_probs)
     if cfg.save_test_predictions:
         # Only the explicitly requested final stage reaches this branch; no test metric affects selection.
         test_loader = data_lib.make_loader(test_df, cfg.images_dir, ev, cfg.batch_size, False, num_workers=cfg.num_workers)
-        test_names, test_y, test_logits, _ = evaluate(net, test_loader, criterion, device)
+        test_names,test_y,test_logits,test_probs = _predict_inference(
+            net,test_loader,device,cfg.inference_method,temperature)
         np.savez_compressed(out/"test_logits.npz", filenames=np.asarray(test_names), y_true=test_y, logits=test_logits)
-        eval_lib.save_predictions(pred_path(cfg, "test"), test_names, test_y, _softmax(test_logits))
-    plot_curves(history, Path("curves")/f"{cfg.exp_id}_seed{cfg.seed}.png", f"{cfg.exp_id} {cfg.backbone}")
+        if cfg.inference_method != "I00_1view":
+            eval_lib.save_predictions(Path(cfg.pred_dir)/f"{cfg.exp_id}_uncal_seed{cfg.seed}_test.csv",
+                                      test_names,test_y,_softmax(test_logits))
+        eval_lib.save_predictions(pred_path(cfg, "test"), test_names, test_y, test_probs)
+    plot_curves(history, Path(cfg.curves_dir)/f"{cfg.exp_id}_seed{cfg.seed}.png", f"{cfg.exp_id} {cfg.backbone}")
     return {"exp_id": cfg.exp_id, "seed": cfg.seed, "best_epoch": best_epoch, "macro_f1_val": best_f1,
             "top1_val": float(metrics["top1"]), "mean_epoch_seconds": float(np.mean(durations)),
             "params_m": model_lib.count_params(net), "gmacs": model_lib.count_gmacs(net, cfg.img_size),
@@ -339,6 +354,30 @@ def run(cfg: Config) -> dict:
 def _softmax(logits):
     z = np.asarray(logits, dtype=np.float64); z -= z.max(axis=1, keepdims=True)
     p = np.exp(z); return p/p.sum(axis=1, keepdims=True)
+
+
+def _predict_inference(model, loader, device, method, temperature=None):
+    """Ordered, single pass to obtain base logits and the selected inference probabilities."""
+    import torch
+    import torch.nn.functional as F
+    from inference import apply_temperature
+    model.eval(); names=[]; ys=[]; zs=[]; ps=[]
+    with torch.inference_mode():
+        for x,y,filenames in loader:
+            x=x.to(device,non_blocking=True); base=model(x).float(); z=base.cpu().numpy()
+            if method == "I00_1view": p=torch.softmax(base,1)
+            elif method == "I03_temperature": p=torch.as_tensor(apply_temperature(z,temperature))
+            elif method == "I01_hflip_prob":
+                p=(torch.softmax(base,1)+torch.softmax(model(torch.flip(x,dims=(-1,))).float(),1))/2
+            elif method == "I02_multiscale_prob":
+                views=[torch.softmax(base,1)]
+                for side in (192,256):
+                    xs=F.interpolate(x,size=(side,side),mode="bilinear",align_corners=False,antialias=True)
+                    views.append(torch.softmax(model(xs).float(),1))
+                p=torch.stack(views).mean(0)
+            else: raise ValueError(f"inference_method không hỗ trợ: {method}")
+            names.extend(filenames); ys.append(y.numpy()); zs.append(z); ps.append(p.cpu().numpy())
+    return names,np.concatenate(ys),np.concatenate(zs),np.concatenate(ps)
 
 
 def parse_overrides(pairs: list[str]) -> dict:
