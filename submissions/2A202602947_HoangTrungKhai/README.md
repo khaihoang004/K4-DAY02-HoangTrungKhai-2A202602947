@@ -22,8 +22,13 @@ python3 submissions/2A202602947_HoangTrungKhai/code/run_experiments.py --stage t
 
 The copied results include five backbone screening runs (B01–B05), seed 0, with epoch logs, validation curves, validation predictions, configs and validation logits under `runs/`, `curves/` and `predictions/`. The best validation macro-F1 is ConvNeXt-Tiny (B03): 0.9694 (top-1 0.9763). This is a one-seed screening result, not a final result. Backbone latency was not measured. The large `.pt` checkpoints are omitted from this submission folder. Final experiments still require controlled training comparisons and at least three seeds; test predictions are not present. Do not use test results to make configuration choices.
 
-Colab/Kaggle notebook link: **add the shareable notebook URL after uploading/running this code**.
+Kaggle notebook: https://www.kaggle.com/code/kahazai/weed-detection
 
 ## Current status
 
-Fold 0 and the pipeline have been checked, and the five backbone screening runs are copied into this package. EDA artifacts are in `eda/`; training logs/configs/validation logits are in `runs/`; curves are in `curves/`; validation predictions are in `predictions/`. No test predictions or three-seed final comparison exist yet, so this package is not complete for final rubric scoring. The notebook URL also remains to be added after upload.
+Fold 0 and the pipeline have been checked, and the five backbone screening runs are copied into this package. EDA artifacts are in `eda/`; training logs/configs/validation logits are in `runs/`; curves are in `curves/`; validation predictions are in `predictions/`. No test predictions or three-seed final comparison exist yet, so this package is not complete for final rubric scoring. Notebook URL đã được cập nhật ở trên.
+
+
+## Chạy trên Kaggle
+
+Dùng notebook gốc ở repository: `weed-detection.ipynb`. Notebook giữ form Kaggle hiện tại (`git clone`, `%cd`, `git pull`, rồi các lệnh `!python3 ...`); thêm dataset `kahazai/weed-dataset`, chọn GPU T4x2 và chạy các cell theo thứ tự. Sau khi lưu Kaggle Version, lấy output ở terminal local bằng `kaggle kernels output kahazai/notebookea6401a469 -p /path/to/dest`.
